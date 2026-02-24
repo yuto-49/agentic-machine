@@ -1,0 +1,62 @@
+# OpenClaw Gateway configuration for Claudius vending machine.
+# OpenClaw acts as a message router ONLY — NOT the agent brain.
+
+model:
+  provider: anthropic
+  model: claude-sonnet-4-5-20250929
+  # Only used for message formatting and heartbeat notifications.
+
+channels:
+  slack:
+    enabled: true
+    token: ${SLACK_BOT_TOKEN}
+    channels:
+      - name: "claudius"
+        description: "Talk to Claudius, the AI vending machine manager"
+    allowFrom:
+      - "*"
+
+  discord:
+    enabled: true
+    token: ${DISCORD_BOT_TOKEN}
+    guilds:
+      - name: "CS Department"
+        channels:
+          - "claudius"
+    allowFrom:
+      - "*"
+
+webhooks:
+  inbound:
+    url: "http://localhost:8000/api/webhook/oclaw"
+    method: POST
+    headers:
+      X-Webhook-Secret: ${WEBHOOK_SECRET}
+  outbound:
+    url: "http://localhost:8000/api/webhook/oclaw/respond"
+
+cron:
+  daily_morning:
+    schedule: "0 8 * * *"
+    webhook: "http://localhost:8000/api/admin/agent/trigger"
+    payload: '{"type": "daily_morning"}'
+
+  low_stock_check:
+    schedule: "0 */4 * * *"
+    webhook: "http://localhost:8000/api/admin/agent/trigger"
+    payload: '{"type": "low_stock_check"}'
+
+  nightly_reconciliation:
+    schedule: "0 23 * * *"
+    webhook: "http://localhost:8000/api/admin/agent/trigger"
+    payload: '{"type": "nightly_reconciliation"}'
+
+security:
+  tools:
+    deny:
+      - sessions_spawn
+      - sessions_send
+      - gateway
+    allow:
+      - web_fetch
+  api_spending_limit: 10

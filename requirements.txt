@@ -1,0 +1,30 @@
+# Core
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+pydantic==2.10.6
+pydantic-settings==2.7.1
+
+# Claude API
+anthropic==0.49.0
+
+# Database
+sqlalchemy[asyncio]==2.0.38
+aiosqlite==0.21.0
+
+# HTTP client (OpenClaw webhook callbacks)
+httpx==0.28.1
+
+# Environment
+python-dotenv==1.0.1
+
+# Hardware (Pi only — install manually on Pi)
+# gpiozero==2.0.1
+# picamera2==0.3.22
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.3
+httpx  # also used as async test client
+
+# Optional: vector memory
+# chromadb==0.6.3
