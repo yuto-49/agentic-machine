@@ -22,6 +22,7 @@ export function EmulatorProvider({ children }) {
   const { products, setProducts, loading: productsLoading, wsConnected } = useProducts();
 
   const patchProducts = useCallback((updates) => {
+    if (!Array.isArray(updates)) return;
     setProducts((prev) =>
       prev.map((p) => {
         const patch = updates.find((u) => u.product_id === p.id);
