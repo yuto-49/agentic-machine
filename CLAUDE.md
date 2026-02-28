@@ -6,6 +6,8 @@ An AI-powered vending machine managed by an LLM agent (Claude). Raspberry Pi run
 
 ## Architecture
 
+> **Full architecture guide:** See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed component docs, data flows, and database schema.
+
 ```
 iPad (PWA) ──► FastAPI (Pi :8000) ──► SQLite DB
                     │
@@ -18,6 +20,30 @@ OpenClaw GW ──► Webhook ──► Agent Loop ──► Claude API (Sonnet 
 1. `FastAPI` (uvicorn :8000) — API server + agent loop
 2. `OpenClaw` (:18789) — Slack/Discord message gateway (routing only, NOT the agent brain)
 3. `Nginx` (:80) — reverse proxy for iPad
+
+### Agent Components (`agent/`)
+
+| File | Role |
+|------|------|
+| `loop.py` | Core agent loop — calls Claude API directly, manages rolling 30K-token conversation history, orchestrates tool use cycle |
+| `prompts.py` | System prompt (identity/business/interaction/order rules) + 10 tool definitions — single source of truth |
+| `tools.py` | Tool implementations (`get_inventory`, `set_price`, `process_order`, etc.) + `execute_tool()` router |
+| `guardrails.py` | Hard-coded business rules enforced before every tool execution — cannot be overridden by the LLM |
+| `memory.py` | Persistent scratchpad (key-value) + KV store, backed by DB tables |
+| `classifier.py` | Regex-based interaction classifier for research data (purchase, inquiry, adversarial, etc.) |
+
+### Message Flow (Slack → Agent → Slack)
+
+```
+Slack user posts in #claudius
+  → OpenClaw forwards to POST /api/webhook/oclaw
+  → webhook validates X-Webhook-Secret
+  → agent_step() called with trigger + sender metadata
+  → Claude API called with SYSTEM_PROMPT + tools + conversation history
+  → Tool calls pass through guardrails → execute if allowed
+  → Final response POSTed back to OpenClaw (localhost:18789/api/send)
+  → OpenClaw delivers response to Slack
+```
 
 ## Development Environment
 

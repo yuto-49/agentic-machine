@@ -14,7 +14,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.memory import AgentMemory
-from db.models import Product, Transaction
+from api.websocket import broadcast
+from db.models import AgentDecision, Product, Transaction
 from hardware import get_controller
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,79 @@ async def tool_get_sales_report(session: AsyncSession, days_back: int) -> str:
     )
 
 
+async def tool_process_order(
+    session: AsyncSession, items: list[dict], customer_name: str
+) -> str:
+    """Process a purchase order from Slack/Discord.
+
+    Guardrails (stock, active status, $80 limit) are validated before this is called.
+    """
+    total = 0.0
+    transaction_ids: list[int] = []
+
+    # Get current balance for balance_after calculation
+    balance_result = await session.execute(select(func.sum(Transaction.amount)))
+    current_balance = balance_result.scalar() or 0.0
+
+    purchased: list[dict] = []
+    for item in items:
+        product = await session.get(Product, item["product_id"])
+        product.quantity -= item["quantity"]
+        sale_amount = product.sell_price * item["quantity"]
+        total += sale_amount
+        current_balance += sale_amount
+
+        txn = Transaction(
+            type="sale",
+            product_id=item["product_id"],
+            quantity=item["quantity"],
+            amount=sale_amount,
+            balance_after=current_balance,
+            notes=f"Agent order ({customer_name}): {item['quantity']}x {product.name}",
+        )
+        session.add(txn)
+        await session.flush()
+        transaction_ids.append(txn.id)
+
+        purchased.append({
+            "product_id": product.id,
+            "name": product.name,
+            "quantity": item["quantity"],
+            "unit_price": product.sell_price,
+            "subtotal": sale_amount,
+            "remaining_stock": product.quantity,
+        })
+
+    # Log agent decision
+    items_summary = ", ".join(f"{i['quantity']}x #{i['product_id']}" for i in items)
+    session.add(AgentDecision(
+        trigger=f"Slack order from {customer_name}: ${total:.2f}",
+        action=f"sale({items_summary})",
+        reasoning=f"Processed order for {customer_name}: {items_summary}. Total: ${total:.2f}. Txn IDs: {transaction_ids}",
+        was_blocked=False,
+    ))
+
+    await session.commit()
+    logger.info("Agent order processed for %s: $%.2f, %d items", customer_name, total, len(items))
+
+    # Broadcast stock updates via WebSocket
+    for item in items:
+        product = await session.get(Product, item["product_id"])
+        await broadcast({
+            "type": "stock_update",
+            "product_id": item["product_id"],
+            "quantity": product.quantity,
+        })
+
+    return json.dumps({
+        "success": True,
+        "total": round(total, 2),
+        "customer": customer_name,
+        "items": purchased,
+        "transaction_ids": transaction_ids,
+    }, indent=2)
+
+
 async def tool_request_restock(items: list[dict], urgency: str) -> str:
     """Submit a restock request to the admin channel."""
     # Format the request and send via OpenClaw
@@ -172,6 +246,8 @@ async def execute_tool(
         return value or "(empty)"
     elif name == "get_sales_report":
         return await tool_get_sales_report(session, inputs["days_back"])
+    elif name == "process_order":
+        return await tool_process_order(session, inputs["items"], inputs["customer_name"])
     elif name == "request_restock":
         return await tool_request_restock(inputs["items"], inputs["urgency"])
     else:

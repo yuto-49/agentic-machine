@@ -76,4 +76,42 @@ async def validate_action(
         if not inputs.get("reason", "").strip():
             return {"allowed": False, "reason": "Door unlock requires a stated reason"}
 
+    if tool_name == "process_order":
+        items = inputs.get("items", [])
+        if not items:
+            return {"allowed": False, "reason": "Order must contain at least one item"}
+
+        total = 0.0
+        for item in items:
+            qty = item.get("quantity", 0)
+            if qty <= 0:
+                return {
+                    "allowed": False,
+                    "reason": f"Item quantity must be positive, got {qty}",
+                }
+
+            product = await session.get(Product, item["product_id"])
+            if product is None:
+                return {
+                    "allowed": False,
+                    "reason": f"Product {item['product_id']} not found",
+                }
+            if not product.is_active:
+                return {
+                    "allowed": False,
+                    "reason": f"{product.name} is not currently available",
+                }
+            if product.quantity < qty:
+                return {
+                    "allowed": False,
+                    "reason": f"Insufficient stock for {product.name}: {product.quantity} available, requested {qty}",
+                }
+            total += product.sell_price * qty
+
+        if total > MAX_SINGLE_PURCHASE:
+            return {
+                "allowed": False,
+                "reason": f"Order total ${total:.2f} exceeds maximum ${MAX_SINGLE_PURCHASE:.2f}",
+            }
+
     return {"allowed": True, "reason": "OK"}
