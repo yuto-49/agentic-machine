@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     # Slack / Discord (optional until OpenClaw integration)
     slack_bot_token: str = ""
+    slack_app_token: str = ""
     discord_bot_token: str = ""
 
     # Database

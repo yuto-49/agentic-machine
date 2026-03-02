@@ -221,20 +221,19 @@ Called in the agent loop after processing. Results stored in `user_interactions`
 
 ## Data Flows
 
-### Flow 1: Slack/Discord Customer Message
+### Flow 1: Slack Customer Message
 
 ```
-Customer types in #claudius
-  → OpenClaw receives message
-  → POST /api/webhook/oclaw  (X-Webhook-Secret header)
-  → webhook.openclaw_inbound() validates secret
-  → agent_step(trigger, metadata={sender_id, sender_name, platform, channel})
-  → Claude API call (with tool loop)
-  → Final response text returned
-  → POST http://localhost:18789/api/send  (response back to OpenClaw)
-  → OpenClaw delivers to Slack/Discord
-  → Customer sees reply
+Customer @mentions bot in #claudius
+  → Slack delivers via Socket Mode WebSocket to OpenClaw
+  → OpenClaw routes to "claudius" agent (bound via openclaw agents bind)
+  → Agent uses Claude API with workspace skills + conversation
+  → Response delivered back to Slack channel via OpenClaw
 ```
+
+**Note:** The `api/webhook.py` routes exist for an alternative webhook-based
+integration but are not used in the current Socket Mode setup. OpenClaw handles
+the full message lifecycle (receive → agent → respond) internally.
 
 ### Flow 2: iPad Checkout
 
@@ -311,23 +310,43 @@ GPIO pins (BCM): Door=17, Fridge=27, LED=22.
 
 ---
 
-## OpenClaw Configuration — `config/openclaw.yaml`
+## OpenClaw Configuration
 
-OpenClaw is a **message router only**. It does not call Claude API.
+OpenClaw runs as a **LaunchAgent** on macOS (or systemd on Pi). It connects to Slack
+via **Socket Mode** (persistent WebSocket, no public HTTP endpoint needed).
 
-**Channels:** Slack (#claudius) and Discord (#claudius)
+**Actual config:** `~/.openclaw/openclaw.json` (NOT `config/openclaw.yaml` — that file
+is a reference only and is not loaded by OpenClaw).
 
-**Webhooks:**
-- Inbound: `POST http://localhost:8000/api/webhook/oclaw` (with X-Webhook-Secret)
-- Outbound: agent calls `POST http://localhost:18789/api/send` to reply
+**Key config settings:**
 
-**Cron jobs:**
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `gateway.mode` | `local` | Required — gateway won't start without this |
+| `channels.slack.mode` | `socket` | Socket Mode (WebSocket, requires app-level token) |
+| `channels.slack.groupPolicy` | `open` | Accept messages from all channels |
+| `channels.slack.botToken` | `xoxb-...` | Bot user OAuth token |
+| `channels.slack.appToken` | `xapp-...` | App-level token for Socket Mode |
 
-| Schedule | Type | Purpose |
-|----------|------|---------|
-| `0 8 * * *` | daily_morning | Morning inventory review |
-| `0 */4 * * *` | low_stock_check | Check for items with <= 3 units |
-| `0 23 * * *` | nightly_reconciliation | End-of-day financial review |
+**Agent routing:** Agents are isolated workspaces. The `claudius` agent is bound to
+Slack with its workspace pointing at this project directory.
+
+```
+openclaw agents add claudius --workspace /path/to/agentic-machine --bind slack
+```
+
+**LaunchAgent plist:** `~/Library/LaunchAgents/ai.openclaw.gateway.plist`
+- Must include `ANTHROPIC_API_KEY` in `EnvironmentVariables`
+- `openclaw gateway install` regenerates the plist (wipes custom env vars)
+- After install, re-add API key and reload with `launchctl bootstrap`
+
+**Mention requirement:** OpenClaw only responds to messages that `@mention` the bot
+in channels. Direct messages don't require a mention.
+
+**Logs:**
+- `~/.openclaw/logs/gateway.log` — stdout (startup, connections, agent activity)
+- `~/.openclaw/logs/gateway.err.log` — stderr (errors, crash info)
+- `/tmp/openclaw/openclaw-YYYY-MM-DD.log` — detailed JSON log
 
 ---
 
@@ -350,7 +369,8 @@ Pydantic Settings loaded from `.env`:
 |----------|----------|---------|---------|
 | ANTHROPIC_API_KEY | Yes | — | Claude API access |
 | WEBHOOK_SECRET | Yes | — | OpenClaw webhook auth |
-| SLACK_BOT_TOKEN | No | — | Slack integration |
+| SLACK_BOT_TOKEN | Yes | — | Slack bot token (xoxb-...) |
+| SLACK_APP_TOKEN | Yes | — | Slack app-level token (xapp-...) for Socket Mode |
 | DISCORD_BOT_TOKEN | No | — | Discord integration |
 | DATABASE_URL | No | `sqlite+aiosqlite:///./claudius.db` | Database connection |
 | ENVIRONMENT | No | `development` | Controls SQL echo logging |

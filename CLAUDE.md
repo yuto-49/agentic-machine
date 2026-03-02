@@ -35,22 +35,22 @@ OpenClaw GW ──► Webhook ──► Agent Loop ──► Claude API (Sonnet 
 ### Message Flow (Slack → Agent → Slack)
 
 ```
-Slack user posts in #claudius
-  → OpenClaw forwards to POST /api/webhook/oclaw
-  → webhook validates X-Webhook-Secret
-  → agent_step() called with trigger + sender metadata
-  → Claude API called with SYSTEM_PROMPT + tools + conversation history
-  → Tool calls pass through guardrails → execute if allowed
-  → Final response POSTed back to OpenClaw (localhost:18789/api/send)
-  → OpenClaw delivers response to Slack
+Slack user @mentions bot in #claudius
+  → OpenClaw receives via Socket Mode (WebSocket, not HTTP webhook)
+  → OpenClaw routes to "claudius" agent (bound via `openclaw agents bind`)
+  → Agent uses Claude API with workspace skills + conversation
+  → Response delivered back to Slack via OpenClaw
 ```
+
+**Note:** OpenClaw requires `@agentic-machine` mention in channel messages.
+Messages without a mention are ignored (`no-mention` filter).
 
 ## Development Environment
 
-- **Python 3.13** — backend (FastAPI + agent + hardware)
+- **Python 3.12** — backend (FastAPI + agent + hardware)
 - **Node.js** — frontend build (React + Vite + Tailwind) and OpenClaw gateway
 - **SQLite** via **SQLAlchemy ORM** (async with aiosqlite)
-- **Windows development** with Pi deployment — hardware modules auto-mock on non-Pi platforms
+- **macOS development** with Pi deployment — hardware modules auto-mock on non-Pi platforms
 
 ## Key Directories
 
@@ -106,28 +106,71 @@ scripts/             → Seed data, backup, manual test scripts
 ```
 ANTHROPIC_API_KEY=     # Required — Claude API access
 WEBHOOK_SECRET=        # Required — OpenClaw ↔ FastAPI auth
-SLACK_BOT_TOKEN=       # Optional until OpenClaw integration
-DISCORD_BOT_TOKEN=     # Optional until OpenClaw integration
+SLACK_BOT_TOKEN=       # Required — Slack bot token (xoxb-...)
+SLACK_APP_TOKEN=       # Required — Slack app-level token (xapp-...) for Socket Mode
+DISCORD_BOT_TOKEN=     # Optional until Discord integration
 DATABASE_URL=          # Default: sqlite+aiosqlite:///./claudius.db
 ENVIRONMENT=           # development | production
 LOG_LEVEL=             # DEBUG | INFO | WARNING (default: INFO)
 ```
 
-## Running Locally (Windows)
+## Running Locally (macOS)
 
 ```bash
-# Backend
+# Backend (terminal 1)
 python -m venv venv
-venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
 python db/init_db.py
 uvicorn main:app --reload --port 8000
 
-# Frontend (separate terminal)
+# Frontend (terminal 2)
 cd frontend
 npm install
 npm run dev
 ```
+
+## OpenClaw Gateway Setup (macOS)
+
+OpenClaw is installed globally via npm and runs as a LaunchAgent.
+
+```bash
+# 1. Install OpenClaw
+npm install -g openclaw
+
+# 2. Set gateway mode
+openclaw config set gateway.mode local
+
+# 3. Add Slack channel (requires both bot + app tokens)
+openclaw channels add --channel slack \
+  --bot-token "xoxb-..." \
+  --app-token "xapp-..."
+
+# 4. Set channel policy to open
+openclaw config set channels.slack.groupPolicy open
+
+# 5. Create agent with workspace pointed at this project
+openclaw agents add claudius \
+  --workspace /path/to/agentic-machine \
+  --bind slack --non-interactive
+
+# 6. Install and start gateway service
+openclaw gateway install
+
+# 7. Add ANTHROPIC_API_KEY to the LaunchAgent plist
+#    (edit ~/Library/LaunchAgents/ai.openclaw.gateway.plist,
+#     add ANTHROPIC_API_KEY to EnvironmentVariables dict,
+#     then reload with: openclaw gateway stop && launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ai.openclaw.gateway.plist)
+```
+
+**Config locations:**
+- OpenClaw config: `~/.openclaw/openclaw.json`
+- LaunchAgent plist: `~/Library/LaunchAgents/ai.openclaw.gateway.plist`
+- Logs: `~/.openclaw/logs/gateway.log` and `/tmp/openclaw/`
+
+**Important:** `openclaw gateway install` regenerates the plist, so re-add
+`ANTHROPIC_API_KEY` to the plist after every install and use `launchctl bootstrap`
+to reload instead of `openclaw gateway start`.
 
 ## Running on Pi (Production)
 
