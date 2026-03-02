@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Claudius — AI Vending Machine
 
 ## Project Overview
@@ -11,7 +15,7 @@ An AI-powered vending machine managed by an LLM agent (Claude). Raspberry Pi run
 ```
 iPad (PWA) ──► FastAPI (Pi :8000) ──► SQLite DB
                     │
-OpenClaw GW ──► Webhook ──► Agent Loop ──► Claude API (Sonnet 4.5)
+OpenClaw GW ──► Webhook ──► Agent Loop ──► Claude API (Sonnet 4.6)
                     │
               Hardware Controller ──► GPIO / Camera / NFC
 ```
@@ -86,7 +90,7 @@ scripts/             → Seed data, backup, manual test scripts
 
 ### Hardware
 - `hardware/__init__.py` exports `get_controller()` which returns real or mock controller based on platform
-- On Windows: all hardware calls are no-ops that log to console
+- On non-Pi platforms (including macOS dev): all hardware calls are no-ops that log to console
 - On Pi: uses `gpiozero` for GPIO, `picamera2` for camera
 
 ### Frontend
@@ -202,6 +206,15 @@ These are enforced in `agent/guardrails.py` at the tool execution level:
 - Max restock quantity: 50 per item per request
 - Door unlock requires a stated reason
 - Price cannot exceed 5x cost (likely error)
+
+## Known Gotchas & Incomplete Features
+
+- **`api/webhook.py` is NOT called in the normal Slack flow.** OpenClaw uses Socket Mode (persistent WebSocket) and handles the full Slack lifecycle internally. The webhook routes are reference implementations and only needed if switching to HTTP webhook mode.
+- **Conversation history is in-memory only** — the rolling message list in `agent/loop.py` is lost on agent restart. This is intentional but means agents can't maintain deep context across restarts.
+- **`MAX_DISCOUNT_PERCENT = 15` in `guardrails.py` is defined but never enforced** in validation logic — discount rules exist only in the system prompt, not in hard code.
+- **`DailyMetric` DB table** is defined in `db/models.py` but never written to anywhere in the codebase. Intended for future research analytics.
+- **Vector memory (Tier 3)** in `agent/memory.py` is stubbed with a comment about ChromaDB but not implemented — only Tier 1 (scratchpad KV) and Tier 2 (structured KV) are active.
+- **`ANTHROPIC_API_KEY` defaults to empty string** in `config_app.py` — the server starts successfully without it, then fails at the first agent call with a cryptic error.
 
 ## Git Workflow
 
