@@ -10,6 +10,7 @@ from api.products import router as products_router
 from api.checkout import router as checkout_router
 from api.webhook import router as webhook_router
 from api.admin import router as admin_router
+from api.requests import router as requests_router
 from api.websocket import router as ws_router
 from db import init_db
 from config_app import settings
@@ -42,6 +43,7 @@ app.include_router(products_router, prefix="/api", tags=["products"])
 app.include_router(checkout_router, prefix="/api", tags=["checkout"])
 app.include_router(webhook_router, prefix="/api", tags=["webhook"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+app.include_router(requests_router, prefix="/api", tags=["requests"])
 app.include_router(ws_router, tags=["websocket"])
 
 

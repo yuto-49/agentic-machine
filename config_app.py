@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./claudius.db"
 
+    # Online product search
+    search_backend: str = "mock"  # mock | amazon
+
     # Environment
     environment: str = "development"
     log_level: str = "INFO"

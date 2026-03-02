@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.memory import AgentMemory
 from api.websocket import broadcast
-from db.models import AgentDecision, Product, Transaction
+from agent.search import get_search_backend, results_to_dicts
+from db.models import AgentDecision, Product, ProductRequest, Transaction
 from hardware import get_controller
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,71 @@ async def tool_request_restock(items: list[dict], urgency: str) -> str:
     return f"Restock request submitted ({urgency} urgency, {len(items)} items)"
 
 
+async def tool_search_product_online(query: str, max_results: int = 5) -> str:
+    """Search online retailers for a product."""
+    backend = get_search_backend()
+    results = await backend.search(query, max_results)
+    return json.dumps(results_to_dicts(results), indent=2)
+
+
+async def tool_request_online_product(
+    session: AsyncSession,
+    query: str,
+    product_name: str,
+    estimated_price: float,
+    source_url: str,
+    image_url: str = "",
+    requested_by: str = "unknown",
+    platform: str = "slack",
+) -> str:
+    """Save a product request after the customer confirms a search result."""
+    req = ProductRequest(
+        query=query,
+        product_name=product_name,
+        source_url=source_url,
+        image_url=image_url,
+        estimated_price=estimated_price,
+        requested_by=requested_by,
+        platform=platform,
+        status="pending",
+    )
+    session.add(req)
+
+    session.add(AgentDecision(
+        trigger=f"Online product request from {requested_by}: {product_name}",
+        action=f"request_online_product({product_name}, ${estimated_price:.2f})",
+        reasoning=f"Customer {requested_by} confirmed request for {product_name} at ${estimated_price:.2f} from {source_url}",
+        was_blocked=False,
+    ))
+
+    await session.commit()
+    await session.refresh(req)
+    logger.info("Product request #%d created: %s ($%.2f)", req.id, product_name, estimated_price)
+
+    await broadcast({
+        "type": "new_product_request",
+        "request": {
+            "id": req.id,
+            "product_name": req.product_name,
+            "estimated_price": req.estimated_price,
+            "source_url": req.source_url,
+            "image_url": req.image_url,
+            "requested_by": req.requested_by,
+            "platform": req.platform,
+            "status": req.status,
+            "created_at": str(req.created_at),
+        },
+    })
+
+    return json.dumps({
+        "success": True,
+        "request_id": req.id,
+        "product_name": req.product_name,
+        "estimated_price": req.estimated_price,
+        "status": req.status,
+    }, indent=2)
+
+
 async def execute_tool(
     name: str,
     inputs: dict[str, Any],
@@ -250,5 +316,20 @@ async def execute_tool(
         return await tool_process_order(session, inputs["items"], inputs["customer_name"])
     elif name == "request_restock":
         return await tool_request_restock(inputs["items"], inputs["urgency"])
+    elif name == "search_product_online":
+        return await tool_search_product_online(
+            inputs["query"], inputs.get("max_results", 5)
+        )
+    elif name == "request_online_product":
+        return await tool_request_online_product(
+            session,
+            query=inputs["query"],
+            product_name=inputs["product_name"],
+            estimated_price=inputs["estimated_price"],
+            source_url=inputs["source_url"],
+            image_url=inputs.get("image_url", ""),
+            requested_by=inputs.get("requested_by", "unknown"),
+            platform=inputs.get("platform", "slack"),
+        )
     else:
         return f"Unknown tool: {name}"

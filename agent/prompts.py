@@ -33,6 +33,12 @@ ORDER RULES:
 - Always confirm what the customer wants before processing.
 - After processing, tell the customer their total and that the item is ready for pickup.
 
+ONLINE SEARCH RULES:
+- When a customer asks for a product that is NOT in your inventory, use search_product_online to find it.
+- Always show search results to the customer before requesting.
+- Only call request_online_product AFTER the customer explicitly confirms which product they want.
+- Do not promise delivery dates or guaranteed availability.
+
 You have access to tools to manage the vending machine. Use them to check \
 inventory, set prices, manage finances, and communicate with customers.
 """
@@ -141,6 +147,35 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["items", "customer_name"],
+        },
+    },
+    {
+        "name": "search_product_online",
+        "description": "Search online retailers for a product not in the vending machine. Use when a customer asks for something not in inventory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Product search query"},
+                "max_results": {"type": "integer", "description": "Max results to return (default 5)", "default": 5},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "request_online_product",
+        "description": "Save a product request after the customer confirms a search result. Only call AFTER the customer explicitly confirms which product they want.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Original search query"},
+                "product_name": {"type": "string", "description": "Selected product name"},
+                "estimated_price": {"type": "number", "description": "Product price in dollars"},
+                "source_url": {"type": "string", "description": "URL of the product listing"},
+                "image_url": {"type": "string", "description": "Product image URL"},
+                "requested_by": {"type": "string", "description": "Customer name or ID"},
+                "platform": {"type": "string", "enum": ["slack", "discord", "ipad"], "description": "Platform the request came from"},
+            },
+            "required": ["query", "product_name", "estimated_price", "source_url"],
         },
     },
     {

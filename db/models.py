@@ -100,6 +100,26 @@ class UserInteraction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ProductRequest(Base):
+    """Customer requests for products not currently in the vending machine."""
+    __tablename__ = "product_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query: Mapped[str] = mapped_column(String(200), nullable=False)
+    product_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_url: Mapped[Optional[str]] = mapped_column(Text)
+    image_url: Mapped[Optional[str]] = mapped_column(Text)
+    estimated_price: Mapped[Optional[float]] = mapped_column(Float)
+    requested_by: Mapped[Optional[str]] = mapped_column(String(100))
+    platform: Mapped[Optional[str]] = mapped_column(String(20))  # slack, discord, ipad
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, approved, ordered, arrived
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class DailyMetric(Base):
     """Agent performance scorecard — one row per day."""
     __tablename__ = "daily_metrics"

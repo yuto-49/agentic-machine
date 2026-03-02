@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       gridTemplateColumns: {
-        emulator: "320px 1fr 360px",
+        emulator: "220px 1fr 1fr 240px",
       },
     },
   },

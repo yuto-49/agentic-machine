@@ -9,8 +9,8 @@ export default function IPadFrame({ children }) {
     <div className="relative flex flex-col items-center">
       {/* iPad outer shell */}
       <div
-        className="bg-gray-800 rounded-[40px] p-4 shadow-2xl border-2 border-gray-600 flex flex-col"
-        style={{ width: 420, height: 620 }}
+        className="bg-gray-800 rounded-[40px] p-4 shadow-2xl border-2 border-gray-600 flex flex-col w-full max-w-[420px]"
+        style={{ height: 620 }}
       >
         {/* Camera dot */}
         <div className="flex justify-center mb-1 shrink-0">

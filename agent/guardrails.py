@@ -20,6 +20,7 @@ MAX_PRICE_MULTIPLIER = 5.0    # sell_price <= cost_price * 5.0 (likely error)
 MAX_DISCOUNT_PERCENT = 15     # max discount without admin override
 MAX_SINGLE_PURCHASE = 80.0    # dollars
 MAX_RESTOCK_QTY_PER_ITEM = 50
+MAX_ONLINE_ORDER_PRICE = 150.0
 
 
 async def validate_action(
@@ -113,5 +114,19 @@ async def validate_action(
                 "allowed": False,
                 "reason": f"Order total ${total:.2f} exceeds maximum ${MAX_SINGLE_PURCHASE:.2f}",
             }
+
+    if tool_name == "request_online_product":
+        price = inputs.get("estimated_price", 0)
+        if price <= 0:
+            return {"allowed": False, "reason": "Estimated price must be positive"}
+        if price > MAX_ONLINE_ORDER_PRICE:
+            return {
+                "allowed": False,
+                "reason": f"Estimated price ${price:.2f} exceeds maximum ${MAX_ONLINE_ORDER_PRICE:.2f}",
+            }
+        if not inputs.get("product_name", "").strip():
+            return {"allowed": False, "reason": "Product name must not be empty"}
+        if not inputs.get("source_url", "").strip():
+            return {"allowed": False, "reason": "Source URL must not be empty"}
 
     return {"allowed": True, "reason": "OK"}
