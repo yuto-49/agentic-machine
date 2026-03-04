@@ -137,3 +137,87 @@ class DailyMetric(Base):
     adversarial_blocked: Mapped[Optional[int]] = mapped_column(Integer)
     total_messages: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Pickup Agent Models
+# ---------------------------------------------------------------------------
+
+class PickupOrder(Base):
+    """Remote order reserved for in-person pickup at the vending machine.
+
+    Lifecycle: pending → ready → picked_up | expired | cancelled
+    """
+    __tablename__ = "pickup_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pickup_code: Mapped[str] = mapped_column(String(8), unique=True, nullable=False, index=True)
+    customer_id: Mapped[Optional[str]] = mapped_column(String(100))   # Slack/Discord sender_id
+    customer_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    platform: Mapped[Optional[str]] = mapped_column(String(20))       # slack, discord, ipad
+    items_json: Mapped[str] = mapped_column(Text, nullable=False)      # JSON list of {product_id, quantity, name, unit_price}
+    total: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending") # pending, ready, picked_up, expired, cancelled
+    transaction_ids_json: Mapped[Optional[str]] = mapped_column(Text)  # JSON list of transaction IDs once processed
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    picked_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class CustomerProfile(Base):
+    """Per-customer persistent memory — the AnimaWorks private encapsulated identity.
+
+    One row per unique (sender_id, platform) pair. The agent can read/write
+    preferences and notes; customers cannot see or modify this directly.
+    """
+    __tablename__ = "customer_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sender_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(100))
+    first_seen: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_seen: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    total_spent: Mapped[float] = mapped_column(Float, default=0.0)
+    purchase_count: Mapped[int] = mapped_column(Integer, default=0)
+    preferences_json: Mapped[Optional[str]] = mapped_column(Text)     # JSON: {liked, disliked, dietary}
+    agent_notes: Mapped[Optional[str]] = mapped_column(Text)          # Private agent observations
+
+
+# ---------------------------------------------------------------------------
+# AnimaWorks-inspired Private Memory: Episodes + Knowledge
+# ---------------------------------------------------------------------------
+
+class AgentEpisode(Base):
+    """Episodic memory — timestamped event log (daily activity).
+
+    Inspired by AnimaWorks Episodes: "what happened and when".
+    Supports selective recall: agent searches episodes by tag or time window.
+    """
+    __tablename__ = "agent_episodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)  # sale, restock, pricing, customer_interaction, system
+    subject: Mapped[Optional[str]] = mapped_column(String(200))          # e.g. customer_id, product_id
+    content: Mapped[str] = mapped_column(Text, nullable=False)           # Human-readable event description
+    tags: Mapped[Optional[str]] = mapped_column(String(500))             # Comma-separated searchable tags
+
+
+class AgentKnowledge(Base):
+    """Semantic memory — learned facts, rules, patterns (survives consolidation).
+
+    Inspired by AnimaWorks Knowledge: "what I've learned from experience".
+    Low-confidence entries decay; high-confidence entries persist.
+    """
+    __tablename__ = "agent_knowledge"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)        # 0.0–1.0; entries < 0.3 are candidates for removal
+    source: Mapped[Optional[str]] = mapped_column(String(100))           # what triggered this knowledge entry
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_accessed: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

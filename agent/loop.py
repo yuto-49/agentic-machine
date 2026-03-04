@@ -15,6 +15,7 @@ import anthropic
 from agent.classifier import classify_interaction
 from agent.guardrails import validate_action
 from agent.memory import AgentMemory
+from agent.memory_prime import prime_context, record_episode
 from agent.prompts import SYSTEM_PROMPT, TOOL_DEFINITIONS
 from agent.tools import execute_tool
 from config_app import settings
@@ -180,11 +181,27 @@ async def agent_step(
             channel=metadata.get("channel") if metadata else None,
         )
 
+        # AnimaWorks-style 5-channel selective recall — inject private context
+        sender_id = metadata.get("sender_id") if metadata else None
+        platform = metadata.get("platform") if metadata else None
+        recalled = await prime_context(session, trigger, sender_id=sender_id, platform=platform)
+        system_with_context = SYSTEM_PROMPT if not recalled else f"{SYSTEM_PROMPT}\n\n{recalled}"
+
+        # Log episode for this incoming interaction
+        await record_episode(
+            session,
+            event_type="customer_interaction",
+            content=f"[{platform}|{metadata.get('sender_name', 'anon') if metadata else 'system'}] {trigger[:200]}",
+            subject=sender_id,
+            tags=f"{platform},{classify_interaction(trigger)}",
+        )
+        await session.flush()
+
         # Call Claude API
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=system_with_context,
             tools=TOOL_DEFINITIONS,
             messages=trimmed,
         )
@@ -241,7 +258,7 @@ async def agent_step(
             response = client.messages.create(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
-                system=SYSTEM_PROMPT,
+                system=system_with_context,
                 tools=TOOL_DEFINITIONS,
                 messages=trimmed,
             )

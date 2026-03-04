@@ -129,4 +129,62 @@ async def validate_action(
         if not inputs.get("source_url", "").strip():
             return {"allowed": False, "reason": "Source URL must not be empty"}
 
+    if tool_name == "create_pickup_reservation":
+        items = inputs.get("items", [])
+        if not items:
+            return {"allowed": False, "reason": "Pickup reservation must contain at least one item"}
+
+        if not inputs.get("customer_id", "").strip():
+            return {"allowed": False, "reason": "customer_id is required for pickup reservations"}
+
+        total = 0.0
+        for item in items:
+            qty = item.get("quantity", 0)
+            if qty <= 0:
+                return {"allowed": False, "reason": f"Pickup item quantity must be positive, got {qty}"}
+            if qty > MAX_RESTOCK_QTY_PER_ITEM:
+                return {
+                    "allowed": False,
+                    "reason": f"Pickup item quantity {qty} is unreasonably large (max {MAX_RESTOCK_QTY_PER_ITEM})",
+                }
+
+            product = await session.get(Product, item.get("product_id"))
+            if product is None:
+                return {"allowed": False, "reason": f"Product {item.get('product_id')} not found"}
+            if not product.is_active:
+                return {"allowed": False, "reason": f"{product.name} is not currently available"}
+            if product.quantity < qty:
+                return {
+                    "allowed": False,
+                    "reason": f"Insufficient stock for {product.name}: {product.quantity} available, requested {qty}",
+                }
+            total += product.sell_price * qty
+
+        if total > MAX_SINGLE_PURCHASE:
+            return {
+                "allowed": False,
+                "reason": f"Pickup order total ${total:.2f} exceeds maximum ${MAX_SINGLE_PURCHASE:.2f}",
+            }
+
+    if tool_name == "confirm_pickup":
+        code = inputs.get("pickup_code", "").strip().upper()
+        if not code:
+            return {"allowed": False, "reason": "pickup_code is required"}
+        if len(code) < 4 or len(code) > 8:
+            return {"allowed": False, "reason": f"pickup_code {code!r} has invalid length (expected 4–8 chars)"}
+
+    if tool_name == "update_customer_notes":
+        if not inputs.get("sender_id", "").strip():
+            return {"allowed": False, "reason": "sender_id is required for update_customer_notes"}
+        notes = inputs.get("notes", "")
+        if len(notes) > 2000:
+            return {"allowed": False, "reason": "Customer notes exceed 2000 character limit"}
+
+    if tool_name == "record_knowledge":
+        if not inputs.get("key", "").strip():
+            return {"allowed": False, "reason": "key is required for record_knowledge"}
+        confidence = inputs.get("confidence", 1.0)
+        if not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
+            return {"allowed": False, "reason": "confidence must be a number between 0.0 and 1.0"}
+
     return {"allowed": True, "reason": "OK"}

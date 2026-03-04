@@ -14,9 +14,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.memory import AgentMemory
+from agent.memory_prime import record_episode, record_knowledge, update_customer_notes
+from agent.pickup import (
+    confirm_pickup as _confirm_pickup,
+    create_reservation,
+    get_pending_pickups,
+)
 from api.websocket import broadcast
 from agent.search import get_search_backend, results_to_dicts
-from db.models import AgentDecision, Product, ProductRequest, Transaction
+from db.models import AgentDecision, CustomerProfile, Product, ProductRequest, Transaction
 from hardware import get_controller
 
 logger = logging.getLogger(__name__)
@@ -284,6 +290,124 @@ async def tool_request_online_product(
     }, indent=2)
 
 
+async def tool_create_pickup_reservation(
+    session: AsyncSession,
+    customer_id: str,
+    customer_name: str,
+    platform: str,
+    items: list[dict],
+) -> str:
+    """Reserve inventory for a remote pickup order and return a pickup code."""
+    try:
+        result = await create_reservation(
+            session, customer_id, customer_name, platform, items
+        )
+        # Broadcast stock updates for reserved items
+        for item in result["items"]:
+            product = await session.get(Product, item["product_id"])
+            if product:
+                await broadcast({"type": "stock_update", "product_id": item["product_id"], "quantity": product.quantity})
+        return json.dumps(result, indent=2)
+    except ValueError as e:
+        return f"Reservation failed: {e}"
+
+
+async def tool_confirm_pickup(
+    session: AsyncSession,
+    pickup_code: str,
+    confirmed_by: str = "ipad",
+) -> str:
+    """Confirm pickup collection and unlock the door."""
+    try:
+        result = await _confirm_pickup(session, pickup_code, confirmed_by)
+        # Unlock the door after confirmation
+        hw = _get_hw()
+        hw.unlock_door()
+        return json.dumps({**result, "door": "unlocked"}, indent=2)
+    except ValueError as e:
+        return f"Pickup confirmation failed: {e}"
+
+
+async def tool_get_pending_pickups(session: AsyncSession) -> str:
+    """List all pending/ready pickup orders (agent monitoring tool)."""
+    orders = await get_pending_pickups(session)
+    return json.dumps(orders, indent=2)
+
+
+async def tool_recall_customer(
+    session: AsyncSession,
+    sender_id: str,
+    platform: str,
+) -> str:
+    """Retrieve a customer's profile and purchase history."""
+    result = await session.execute(
+        select(CustomerProfile).where(
+            CustomerProfile.sender_id == sender_id,
+            CustomerProfile.platform == platform,
+        )
+    )
+    profile = result.scalars().first()
+    if profile is None:
+        return f"No profile found for {sender_id} on {platform}"
+
+    # Last 5 transactions from this customer (via PickupOrders)
+    from db.models import PickupOrder
+    order_result = await session.execute(
+        select(PickupOrder)
+        .where(PickupOrder.customer_id == sender_id)
+        .order_by(PickupOrder.created_at.desc())
+        .limit(5)
+    )
+    recent_orders = order_result.scalars().all()
+
+    data = {
+        "sender_id": profile.sender_id,
+        "platform": profile.platform,
+        "display_name": profile.display_name,
+        "first_seen": str(profile.first_seen),
+        "last_seen": str(profile.last_seen),
+        "purchase_count": profile.purchase_count,
+        "total_spent": profile.total_spent,
+        "preferences": json.loads(profile.preferences_json) if profile.preferences_json else {},
+        "agent_notes": profile.agent_notes,
+        "recent_orders": [
+            {
+                "code": o.pickup_code,
+                "total": o.total,
+                "status": o.status,
+                "created_at": str(o.created_at),
+            }
+            for o in recent_orders
+        ],
+    }
+    return json.dumps(data, indent=2)
+
+
+async def tool_update_customer_notes(
+    session: AsyncSession,
+    sender_id: str,
+    platform: str,
+    notes: str,
+) -> str:
+    """Write private agent observations about a customer (invisible to them)."""
+    await update_customer_notes(session, sender_id, platform, notes)
+    await session.commit()
+    return f"Notes updated for {sender_id}"
+
+
+async def tool_record_knowledge(
+    session: AsyncSession,
+    key: str,
+    value: str,
+    confidence: float = 1.0,
+    source: str = "agent",
+) -> str:
+    """Persist a learned fact or pattern to the semantic knowledge store."""
+    await record_knowledge(session, key, value, confidence, source)
+    await session.commit()
+    return f"Knowledge recorded: {key}"
+
+
 async def execute_tool(
     name: str,
     inputs: dict[str, Any],
@@ -330,6 +454,43 @@ async def execute_tool(
             image_url=inputs.get("image_url", ""),
             requested_by=inputs.get("requested_by", "unknown"),
             platform=inputs.get("platform", "slack"),
+        )
+    elif name == "create_pickup_reservation":
+        return await tool_create_pickup_reservation(
+            session,
+            customer_id=inputs["customer_id"],
+            customer_name=inputs["customer_name"],
+            platform=inputs.get("platform", "slack"),
+            items=inputs["items"],
+        )
+    elif name == "confirm_pickup":
+        return await tool_confirm_pickup(
+            session,
+            pickup_code=inputs["pickup_code"],
+            confirmed_by=inputs.get("confirmed_by", "ipad"),
+        )
+    elif name == "get_pending_pickups":
+        return await tool_get_pending_pickups(session)
+    elif name == "recall_customer":
+        return await tool_recall_customer(
+            session,
+            sender_id=inputs["sender_id"],
+            platform=inputs.get("platform", "slack"),
+        )
+    elif name == "update_customer_notes":
+        return await tool_update_customer_notes(
+            session,
+            sender_id=inputs["sender_id"],
+            platform=inputs.get("platform", "slack"),
+            notes=inputs["notes"],
+        )
+    elif name == "record_knowledge":
+        return await tool_record_knowledge(
+            session,
+            key=inputs["key"],
+            value=inputs["value"],
+            confidence=inputs.get("confidence", 1.0),
+            source=inputs.get("source", "agent"),
         )
     else:
         return f"Unknown tool: {name}"
