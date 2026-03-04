@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from agent.loop import agent_step
+from agent.pickup import expire_stale_pickups
 from config_app import settings
+from db.engine import async_session_factory
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -83,17 +85,22 @@ async def admin_trigger(body: AgentTrigger):
     """Triggered by OpenClaw cron or manual admin action."""
     logger.info("Agent trigger: type=%s", body.type)
 
-    # Build trigger message based on type.
-    # In production, these would pull real data from the DB.
-    # For the skeleton, we send a descriptive trigger string.
+    # Auto-expire stale pickups on cron triggers
+    if body.type in ("daily_morning", "nightly_reconciliation", "low_stock_check"):
+        async with async_session_factory() as session:
+            expired = await expire_stale_pickups(session)
+            if expired:
+                logger.info("Auto-expired %d pickup(s): %s", len(expired), expired)
+
     trigger_messages = {
         "daily_morning": (
             f"Good morning, Claudius. Date: {datetime.now().strftime('%Y-%m-%d')}. "
-            "Please review inventory and take any necessary actions."
+            "Please review inventory, check pending pickups, and take any necessary actions."
         ),
         "low_stock_check": "Low stock check triggered. Please check inventory for items with 3 or fewer units.",
         "nightly_reconciliation": (
-            "End of day reconciliation. Please review today's activity and save daily notes to scratchpad."
+            "End of day reconciliation. Please expire stale pickups, review today's activity, "
+            "record any business insights, and save daily notes to scratchpad."
         ),
     }
 

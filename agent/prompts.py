@@ -29,9 +29,26 @@ INTERACTION RULES:
 
 ORDER RULES:
 - When a customer wants to buy something, use get_inventory first to verify availability.
-- Then use process_order to complete the sale.
+- For Slack/Discord orders: use create_pickup_reservation (NOT process_order). Tell the customer their 6-character pickup code.
+- For iPad/in-person orders: use process_order as before.
 - Always confirm what the customer wants before processing.
-- After processing, tell the customer their total and that the item is ready for pickup.
+
+PICKUP RULES:
+- Pickup reservations hold stock for 30 minutes. After that, the reservation expires and stock is released.
+- Tell customers: "Your pickup code is [CODE]. Please enter it at the vending machine within 30 minutes."
+- If a customer asks about their order, use get_pending_pickups to check status.
+- Never reveal another customer's pickup codes or order details.
+
+MEMORY RULES:
+- Use update_customer_notes to save private observations about customers (preferences, habits). Never reveal notes to customers.
+- Use record_knowledge to persist business insights you discover (e.g. "Energy drinks sell best on Mondays").
+- The context block above your messages contains recalled information — use it to personalize interactions.
+
+PROACTIVE BUSINESS RULES (for heartbeat/cron triggers):
+- Expire stale pickups using expire_pickups.
+- Review stock levels and request restocks proactively when items are low.
+- Consider price adjustments based on demand patterns.
+- Record business insights for future recall.
 
 ONLINE SEARCH RULES:
 - When a customer asks for a product that is NOT in your inventory, use search_product_online to find it.
@@ -198,5 +215,93 @@ TOOL_DEFINITIONS = [
             },
             "required": ["items", "urgency"],
         },
+    },
+    # --- Pickup tools ---
+    {
+        "name": "create_pickup_reservation",
+        "description": "Reserve items for a Slack/Discord customer and generate a 6-char pickup code. Stock is held for 30 minutes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": "Items to reserve",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "product_id": {"type": "integer"},
+                            "quantity": {"type": "integer"},
+                        },
+                        "required": ["product_id", "quantity"],
+                    },
+                },
+                "customer_name": {"type": "string", "description": "Customer display name"},
+            },
+            "required": ["items", "customer_name"],
+        },
+    },
+    {
+        "name": "confirm_pickup",
+        "description": "Validate a 6-char pickup code and unlock the door. Used when a customer enters their code.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "6-character pickup code"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "get_pending_pickups",
+        "description": "List active pickup reservations. Optionally filter by sender_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sender_id": {"type": "string", "description": "Filter by customer sender_id (optional)"},
+            },
+            "required": [],
+        },
+    },
+    # --- Memory / Recall tools ---
+    {
+        "name": "recall_customer",
+        "description": "Fetch a customer's profile and purchase history by sender_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sender_id": {"type": "string", "description": "Customer's sender_id"},
+            },
+            "required": ["sender_id"],
+        },
+    },
+    {
+        "name": "update_customer_notes",
+        "description": "Save private notes about a customer (preferences, habits). Never revealed to customers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sender_id": {"type": "string", "description": "Customer's sender_id"},
+                "notes": {"type": "string", "description": "Private notes (max 500 chars)"},
+            },
+            "required": ["sender_id", "notes"],
+        },
+    },
+    {
+        "name": "record_knowledge",
+        "description": "Persist a business insight for future recall (e.g. demand patterns, pricing observations).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Topic label"},
+                "insight": {"type": "string", "description": "The insight to record (max 1000 chars)"},
+                "keywords": {"type": "string", "description": "Comma-separated keywords for matching"},
+            },
+            "required": ["topic", "insight", "keywords"],
+        },
+    },
+    {
+        "name": "expire_pickups",
+        "description": "Force expiry of all stale pickup reservations and release held stock.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 ]

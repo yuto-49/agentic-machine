@@ -120,6 +120,64 @@ class ProductRequest(Base):
     )
 
 
+class PickupOrder(Base):
+    """Reservation-based pickup orders from Slack/Discord."""
+    __tablename__ = "pickup_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(6), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="reserved")  # reserved, picked_up, expired, cancelled
+    items_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON: [{product_id, name, quantity, unit_price, subtotal}]
+    total_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    transaction_ids_json: Mapped[Optional[str]] = mapped_column(Text)  # JSON array of Transaction IDs
+    sender_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    customer_name: Mapped[Optional[str]] = mapped_column(String(100))
+    platform: Mapped[Optional[str]] = mapped_column(String(20))
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    picked_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CustomerProfile(Base):
+    """Per-customer profile for selective recall."""
+    __tablename__ = "customer_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sender_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(100))
+    total_spend: Mapped[float] = mapped_column(Float, default=0.0)
+    purchase_count: Mapped[int] = mapped_column(Integer, default=0)
+    private_notes: Mapped[Optional[str]] = mapped_column(Text)  # Agent-only, never shown to customers
+    first_seen: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_seen: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AgentEpisode(Base):
+    """Episodic memory — timestamped events for recall."""
+    __tablename__ = "agent_episodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, index=True, server_default=func.now())
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)  # sale, pickup, price_change, restock, alert
+    sender_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    details_json: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AgentKnowledge(Base):
+    """Persistent knowledge base — business insights for future recall."""
+    __tablename__ = "agent_knowledge"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    topic: Mapped[str] = mapped_column(String(200), nullable=False)
+    insight: Mapped[str] = mapped_column(Text, nullable=False)
+    keywords: Mapped[Optional[str]] = mapped_column(Text)  # Comma-separated, for LIKE matching
+    source: Mapped[Optional[str]] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class DailyMetric(Base):
     """Agent performance scorecard — one row per day."""
     __tablename__ = "daily_metrics"

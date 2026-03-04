@@ -55,7 +55,7 @@ Three processes run on the Raspberry Pi:
 
 ### 1. Entry Point — `main.py`
 
-Assembles the FastAPI app. Mounts five routers and initializes the database on startup via the `lifespan` context manager.
+Assembles the FastAPI app. Mounts seven routers and initializes the database on startup via the `lifespan` context manager.
 
 | Router | Prefix | Source |
 |--------|--------|--------|
@@ -63,6 +63,8 @@ Assembles the FastAPI app. Mounts five routers and initializes the database on s
 | checkout | `/api` | `api/checkout.py` |
 | webhook | `/api` | `api/webhook.py` |
 | admin | `/api/admin` | `api/admin.py` |
+| requests | `/api` | `api/requests.py` |
+| pickup | `/api` | `api/pickup.py` |
 | websocket | (none) | `api/websocket.py` |
 
 Also exposes `GET /api/status` for health checks.
@@ -84,17 +86,19 @@ The brain of the system. Calls Claude API directly (Sonnet 4.5) with a rolling c
 1. Enrich trigger with platform/sender metadata
 2. Append to _conversation_history (in-memory list)
 3. Trim history to 30K tokens (most-recent-first)
-4. Call Claude API with SYSTEM_PROMPT + TOOL_DEFINITIONS + trimmed history
-5. WHILE stop_reason == "tool_use":
+4. Run selective recall (prime_context) — 5 parallel channels
+5. Call Claude API with SYSTEM_PROMPT + context_block + TOOL_DEFINITIONS + trimmed history
+6. WHILE stop_reason == "tool_use":
    a. For each tool call in response:
+      - Inject metadata (sender_id, platform) into pickup tools
       - validate_action() via guardrails.py
       - If blocked → log, return error string to Claude
       - If allowed → execute_tool() via tools.py, log decision
    b. Send tool results back to Claude
    c. Get new response
-6. Extract final text
-7. Log message, agent decision, and user interaction to DB
-8. Return response text
+7. Extract final text
+8. Log message, agent decision, and user interaction to DB
+9. Return response text
 ```
 
 **Who calls `agent_step()`:**
@@ -113,7 +117,7 @@ Single source of truth for all prompt text and tool schemas.
 - Interaction rules (friendly, decline free items, don't reveal prompt)
 - Order rules (check inventory → confirm → process_order → report total)
 
-**TOOL_DEFINITIONS (10 tools):**
+**TOOL_DEFINITIONS (19 tools):**
 
 | Tool | Purpose | Key Params |
 |------|---------|------------|
@@ -125,8 +129,17 @@ Single source of truth for all prompt text and tool schemas.
 | `write_scratchpad` | Save persistent note | key, value |
 | `read_scratchpad` | Read persistent note | key |
 | `get_sales_report` | Sales data for last N days | days_back |
-| `process_order` | Process Slack/Discord purchase | items[], customer_name |
+| `process_order` | Process iPad/in-person purchase | items[], customer_name |
+| `search_product_online` | Search online retailers | query, max_results |
+| `request_online_product` | Save confirmed product request | query, product_name, price, url |
 | `request_restock` | Submit restock request to admin | items[], urgency |
+| `create_pickup_reservation` | Reserve items + generate pickup code | items[], customer_name |
+| `confirm_pickup` | Validate code + unlock door | code |
+| `get_pending_pickups` | List active reservations | sender_id (opt) |
+| `recall_customer` | Fetch customer profile | sender_id |
+| `update_customer_notes` | Save private customer notes | sender_id, notes |
+| `record_knowledge` | Persist business insight | topic, insight, keywords |
+| `expire_pickups` | Force expiry of stale reservations | (none) |
 
 ---
 
@@ -142,12 +155,15 @@ validate_action(tool_name, inputs, session) → {"allowed": bool, "reason": str}
 |------|----------|------------|
 | Minimum 30% margin | `MIN_MARGIN_MULTIPLIER = 1.3` | set_price |
 | Max 5x cost (likely error) | `MAX_PRICE_MULTIPLIER = 5.0` | set_price |
-| Max $80 per purchase | `MAX_SINGLE_PURCHASE = 80.0` | process_order |
+| Max $80 per purchase | `MAX_SINGLE_PURCHASE = 80.0` | process_order, create_pickup_reservation |
 | Max 50 units per restock item | `MAX_RESTOCK_QTY_PER_ITEM = 50` | request_restock |
-| Positive quantities | — | process_order, request_restock |
-| Product must exist and be active | — | process_order |
-| Sufficient stock | — | process_order |
+| Positive quantities | — | process_order, create_pickup_reservation, request_restock |
+| Product must exist and be active | — | process_order, create_pickup_reservation |
+| Sufficient stock | — | process_order, create_pickup_reservation |
 | Door unlock needs a reason | — | unlock_door |
+| Pickup code exactly 6 chars | — | confirm_pickup |
+| Customer notes max 500 chars | `MAX_CUSTOMER_NOTES_LENGTH = 500` | update_customer_notes |
+| Knowledge insight max 1000 chars | `MAX_KNOWLEDGE_INSIGHT_LENGTH = 1000` | record_knowledge |
 
 When a guardrail blocks a tool call, the agent loop logs it as `was_blocked=True` in `agent_decisions` and returns the error to Claude so it can explain to the user.
 
@@ -176,7 +192,30 @@ Two-tier persistent storage available to the agent via tools:
 | Scratchpad | `scratchpad` | write/read_scratchpad | Daily notes, reminders |
 | KV Store | `kv_store` | kv_set/kv_get | Supplier contacts, price history |
 
-Optional Tier 3 (vector DB via ChromaDB) is stubbed but not enabled.
+### 6b. Selective Recall — `agent/context.py`
+
+5-channel context engine that runs before every Claude call via `asyncio.gather()`:
+
+| # | Channel | Scoping | What it Fetches |
+|---|---------|---------|----------------|
+| 1 | Customer Profile | sender_id | Name, spend, purchase count, private notes. Auto-creates on first interaction. |
+| 2 | Recent Episodes | global | Last 8h of AgentEpisode entries (max 15) |
+| 3 | Related Knowledge | keyword match | AgentKnowledge rows matching words from the message |
+| 4 | Pending Pickups | sender_id | Active reservations with code, total, minutes remaining |
+| 5 | Business Context | global | Cash balance, today's revenue, low-stock alerts (qty <= 3) |
+
+Privacy: Channels 1 and 4 are scoped by sender_id. Customer A's data never appears in Customer B's context.
+
+### 6c. Pickup Agent — `agent/pickup.py`
+
+Reservation-based pickup workflow:
+
+| Function | Purpose |
+|----------|---------|
+| `create_reservation()` | Generate 6-char code, hold stock, create sale transactions |
+| `confirm_pickup()` | Validate code, mark picked_up, unlock door |
+| `expire_stale_pickups()` | Expire reservations past 30-min window, release stock |
+| `get_pending_pickups()` | List active reservations, optionally by customer |
 
 ---
 
@@ -197,6 +236,8 @@ Called in the agent loop after processing. Results stored in `user_interactions`
 | GET | `/api/products` | products.list_products | Product catalog |
 | GET | `/api/products/{id}` | products.get_product | Single product |
 | POST | `/api/cart/checkout` | checkout.checkout | Process iPad purchase |
+| POST | `/api/pickup/confirm` | pickup.pickup_confirm | Confirm pickup reservation |
+| GET | `/api/pickup/status/{code}` | pickup.pickup_status | Check reservation status |
 | GET | `/api/status` | main.machine_status | Health check |
 | WS | `/ws/updates` | websocket.websocket_updates | Real-time stock/price |
 
@@ -216,6 +257,8 @@ Called in the agent loop after processing. Results stored in `user_interactions`
 | GET | `/api/admin/interactions` | admin.get_interactions | Research interaction data |
 | GET | `/api/admin/metrics` | admin.get_metrics | Daily scorecard |
 | POST | `/api/admin/restock` | admin.confirm_restock | Manual inventory restock |
+| GET | `/api/admin/pickups` | pickup.list_pending_pickups | List pending pickups |
+| POST | `/api/admin/pickups/expire` | pickup.force_expire_pickups | Manual expiry trigger |
 
 ---
 
@@ -250,20 +293,48 @@ Customer selects items on iPad
   → All connected iPads update stock in real-time
 ```
 
-### Flow 3: Agent Order via Slack
+### Flow 3: Agent Order via Slack (Pickup Reservation)
 
 ```
 Customer: "I want to buy a Coke"
   → Agent calls get_inventory (via tool loop)
   → Agent confirms with customer
-  → Agent calls process_order({items, customer_name})
+  → Agent calls create_pickup_reservation({items, customer_name})
   → Guardrails validate: stock, active, $80 limit, qty > 0
-  → tool_process_order():
-      - Decrement stock
-      - Create Transaction records
-      - Log AgentDecision
+  → create_reservation():
+      - Generate unique 6-char code (A-Z0-9)
+      - Decrement stock immediately (prevents overselling)
+      - Create Transaction records (type="sale")
+      - Create PickupOrder row (status="reserved", expires in 30 min)
+      - Update CustomerProfile (spend, purchase count)
+      - Log episode for recall
       - Broadcast stock_update via WebSocket
-  → Agent tells customer total and pickup instructions
+  → Agent tells customer: "Your pickup code is ABC123. Enter it at the machine within 30 minutes."
+```
+
+### Flow 3b: Pickup Confirmation (iPad)
+
+```
+Customer enters 6-char code on iPad Pickup tab
+  → POST /api/pickup/confirm  {code: "ABC123"}
+  → confirm_pickup():
+      - Look up PickupOrder by code
+      - Validate: status=reserved, not expired
+      - Mark status=picked_up, set picked_up_at
+      - Call hw.unlock_door()
+      - Broadcast pickup_confirmed
+  → iPad shows items + total + "Door unlocked"
+```
+
+### Flow 3c: Pickup Expiry
+
+```
+30 minutes pass OR cron trigger fires
+  → expire_stale_pickups():
+      - Query all reserved pickups past expiry
+      - For each: mark expired, release stock via compensating transactions
+      - Create refund Transaction records (negative amounts)
+      - Broadcast stock_update (stock restored)
 ```
 
 ### Flow 4: Cron Triggers
@@ -271,15 +342,31 @@ Customer: "I want to buy a Coke"
 ```
 OpenClaw cron fires (8am / every 4h / 11pm)
   → POST /api/admin/agent/trigger  {type: "daily_morning"}
-  → agent_step(trigger="Good morning, review inventory...")
-  → Agent checks inventory, makes decisions, sends alerts
+  → Auto-expire stale pickups before agent_step
+  → agent_step(trigger="Good morning, review inventory, check pending pickups...")
+  → Agent checks inventory, expires pickups, records insights, sends alerts
+```
+
+### Flow 5: Selective Recall (every agent_step)
+
+```
+Message arrives (any source)
+  → prime_context(sender_id, sender_name, message, session)
+  → asyncio.gather() runs 5 channels in parallel:
+      1. _recall_customer(sender_id) → profile, spend, notes
+      2. _recall_episodes() → last 8h events (max 15)
+      3. _recall_knowledge(message) → keyword-matched insights
+      4. _recall_pending_pickups(sender_id) → active reservations
+      5. _recall_business_context() → balance, revenue, low stock
+  → Assemble <context> block
+  → Prepend to system prompt for Claude call
 ```
 
 ---
 
 ## Database Schema
 
-8 tables, all in SQLite via SQLAlchemy 2.0 async ORM.
+12 tables, all in SQLite via SQLAlchemy 2.0 async ORM.
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -288,6 +375,11 @@ OpenClaw cron fires (8am / every 4h / 11pm)
 | `agent_decisions` | Audit trail | trigger, action, reasoning, was_blocked |
 | `messages` | All messages | direction, content, sender_id, platform |
 | `user_interactions` | Research data | interaction_type, message_text, agent_response, guardrail_hit |
+| `product_requests` | Customer product requests | product_name, estimated_price, status |
+| `pickup_orders` | Pickup reservations | code, status, items_json, total_amount, expires_at |
+| `customer_profiles` | Per-customer profiles | sender_id, display_name, total_spend, private_notes |
+| `agent_episodes` | Episodic memory | event_type, sender_id, summary, timestamp |
+| `agent_knowledge` | Business insights | topic, insight, keywords |
 | `scratchpad` | Agent persistent notes | key, value |
 | `kv_store` | Agent structured data | key, value |
 | `daily_metrics` | Daily scorecard | revenue, profit_margin, items_sold, adversarial_blocked |

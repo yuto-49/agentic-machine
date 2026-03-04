@@ -13,6 +13,7 @@ from typing import Any, Optional
 import anthropic
 
 from agent.classifier import classify_interaction
+from agent.context import prime_context
 from agent.guardrails import validate_action
 from agent.memory import AgentMemory
 from agent.prompts import SYSTEM_PROMPT, TOOL_DEFINITIONS
@@ -170,12 +171,20 @@ async def agent_step(
     async with async_session_factory() as session:
         memory = AgentMemory(session)
 
+        # Context priming — selective recall
+        sender_id = metadata.get("sender_id") if metadata else None
+        sender_name = metadata.get("sender_name") if metadata else None
+        context_block = await prime_context(sender_id, sender_name, trigger, session)
+        system_with_context = SYSTEM_PROMPT
+        if context_block:
+            system_with_context = f"{SYSTEM_PROMPT}\n\n{context_block}"
+
         # Log incoming message
         await _log_message(
             session,
             direction="customer_to_agent",
             content=trigger,
-            sender_id=metadata.get("sender_id") if metadata else None,
+            sender_id=sender_id,
             platform=metadata.get("platform") if metadata else None,
             channel=metadata.get("channel") if metadata else None,
         )
@@ -184,7 +193,7 @@ async def agent_step(
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=system_with_context,
             tools=TOOL_DEFINITIONS,
             messages=trimmed,
         )
@@ -197,6 +206,11 @@ async def agent_step(
             tool_results = []
             for block in assistant_content:
                 if block.type == "tool_use":
+                    # Inject metadata into pickup tools
+                    if block.name == "create_pickup_reservation" and metadata:
+                        block.input.setdefault("sender_id", metadata.get("sender_id"))
+                        block.input.setdefault("platform", metadata.get("platform"))
+
                     # Guardrail check
                     validation = await validate_action(block.name, block.input, session)
 
@@ -241,7 +255,7 @@ async def agent_step(
             response = client.messages.create(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
-                system=SYSTEM_PROMPT,
+                system=system_with_context,
                 tools=TOOL_DEFINITIONS,
                 messages=trimmed,
             )

@@ -13,10 +13,24 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.context import log_episode
 from agent.memory import AgentMemory
+from agent.pickup import (
+    confirm_pickup,
+    create_reservation,
+    expire_stale_pickups,
+    get_pending_pickups,
+)
 from api.websocket import broadcast
 from agent.search import get_search_backend, results_to_dicts
-from db.models import AgentDecision, Product, ProductRequest, Transaction
+from db.models import (
+    AgentDecision,
+    AgentKnowledge,
+    CustomerProfile,
+    Product,
+    ProductRequest,
+    Transaction,
+)
 from hardware import get_controller
 
 logger = logging.getLogger(__name__)
@@ -284,6 +298,129 @@ async def tool_request_online_product(
     }, indent=2)
 
 
+async def tool_create_pickup_reservation(
+    session: AsyncSession,
+    items: list[dict],
+    customer_name: str,
+    sender_id: str = "",
+    platform: str = "slack",
+) -> str:
+    """Create a pickup reservation and return the code."""
+    result = await create_reservation(
+        session, items, customer_name, sender_id=sender_id, platform=platform
+    )
+    await log_episode(
+        session,
+        event_type="pickup",
+        summary=f"Reservation {result['code']} for {customer_name}: ${result['total']:.2f}",
+        sender_id=sender_id,
+        details=result,
+    )
+    # Update customer profile spend
+    if sender_id:
+        profile = await session.execute(
+            select(CustomerProfile).where(CustomerProfile.sender_id == sender_id)
+        )
+        cp = profile.scalar_one_or_none()
+        if cp:
+            cp.total_spend += result["total"]
+            cp.purchase_count += 1
+            await session.commit()
+
+    return json.dumps(result, indent=2)
+
+
+async def tool_confirm_pickup(session: AsyncSession, code: str) -> str:
+    """Confirm a pickup code and unlock the door."""
+    result = await confirm_pickup(session, code)
+    if result["success"]:
+        await log_episode(
+            session,
+            event_type="pickup",
+            summary=f"Pickup {code} confirmed for {result.get('customer', 'unknown')}",
+        )
+    return json.dumps(result, indent=2)
+
+
+async def tool_get_pending_pickups(
+    session: AsyncSession, sender_id: str = "",
+) -> str:
+    """List active pickup reservations."""
+    pickups = await get_pending_pickups(session, sender_id=sender_id or None)
+    return json.dumps(pickups, indent=2)
+
+
+async def tool_recall_customer(session: AsyncSession, sender_id: str) -> str:
+    """Fetch a customer profile."""
+    result = await session.execute(
+        select(CustomerProfile).where(CustomerProfile.sender_id == sender_id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        return json.dumps({"found": False, "sender_id": sender_id})
+
+    return json.dumps({
+        "found": True,
+        "sender_id": profile.sender_id,
+        "display_name": profile.display_name,
+        "total_spend": round(profile.total_spend, 2),
+        "purchase_count": profile.purchase_count,
+        "private_notes": profile.private_notes,
+        "first_seen": profile.first_seen.isoformat() if profile.first_seen else None,
+        "last_seen": profile.last_seen.isoformat() if profile.last_seen else None,
+    }, indent=2)
+
+
+async def tool_update_customer_notes(
+    session: AsyncSession, sender_id: str, notes: str,
+) -> str:
+    """Save private notes about a customer."""
+    result = await session.execute(
+        select(CustomerProfile).where(CustomerProfile.sender_id == sender_id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        profile = CustomerProfile(sender_id=sender_id, display_name="Unknown")
+        session.add(profile)
+
+    profile.private_notes = notes
+    await session.commit()
+    return f"Notes updated for {sender_id}"
+
+
+async def tool_record_knowledge(
+    session: AsyncSession, topic: str, insight: str, keywords: str,
+) -> str:
+    """Persist a business insight."""
+    entry = AgentKnowledge(
+        topic=topic,
+        insight=insight,
+        keywords=keywords,
+        source="agent",
+    )
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return json.dumps({
+        "id": entry.id,
+        "topic": topic,
+        "insight": insight,
+        "keywords": keywords,
+    }, indent=2)
+
+
+async def tool_expire_pickups(session: AsyncSession) -> str:
+    """Force expiry of stale reservations."""
+    expired = await expire_stale_pickups(session)
+    if expired:
+        await log_episode(
+            session,
+            event_type="alert",
+            summary=f"Expired {len(expired)} pickup(s): {', '.join(expired)}",
+        )
+    return json.dumps({"expired_codes": expired, "count": len(expired)})
+
+
 async def execute_tool(
     name: str,
     inputs: dict[str, Any],
@@ -331,5 +468,29 @@ async def execute_tool(
             requested_by=inputs.get("requested_by", "unknown"),
             platform=inputs.get("platform", "slack"),
         )
+    # --- Pickup tools ---
+    elif name == "create_pickup_reservation":
+        return await tool_create_pickup_reservation(
+            session,
+            items=inputs["items"],
+            customer_name=inputs["customer_name"],
+            sender_id=inputs.get("sender_id", ""),
+            platform=inputs.get("platform", "slack"),
+        )
+    elif name == "confirm_pickup":
+        return await tool_confirm_pickup(session, inputs["code"])
+    elif name == "get_pending_pickups":
+        return await tool_get_pending_pickups(session, inputs.get("sender_id", ""))
+    # --- Memory / Recall tools ---
+    elif name == "recall_customer":
+        return await tool_recall_customer(session, inputs["sender_id"])
+    elif name == "update_customer_notes":
+        return await tool_update_customer_notes(session, inputs["sender_id"], inputs["notes"])
+    elif name == "record_knowledge":
+        return await tool_record_knowledge(
+            session, inputs["topic"], inputs["insight"], inputs["keywords"]
+        )
+    elif name == "expire_pickups":
+        return await tool_expire_pickups(session)
     else:
         return f"Unknown tool: {name}"

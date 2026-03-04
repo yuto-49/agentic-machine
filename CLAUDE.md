@@ -26,9 +26,11 @@ OpenClaw GW ──► Webhook ──► Agent Loop ──► Claude API (Sonnet 
 | File | Role |
 |------|------|
 | `loop.py` | Core agent loop — calls Claude API directly, manages rolling 30K-token conversation history, orchestrates tool use cycle |
-| `prompts.py` | System prompt (identity/business/interaction/order rules) + 10 tool definitions — single source of truth |
-| `tools.py` | Tool implementations (`get_inventory`, `set_price`, `process_order`, etc.) + `execute_tool()` router |
+| `prompts.py` | System prompt (identity/business/interaction/order/pickup/memory rules) + 19 tool definitions — single source of truth |
+| `tools.py` | Tool implementations (19 tools) + `execute_tool()` router |
 | `guardrails.py` | Hard-coded business rules enforced before every tool execution — cannot be overridden by the LLM |
+| `pickup.py` | Pickup reservation logic — reservation codes, stock hold, expiry, compensating transactions |
+| `context.py` | Selective recall — 5-channel context priming before every Claude call (customer, episodes, knowledge, pickups, business) |
 | `memory.py` | Persistent scratchpad (key-value) + KV store, backed by DB tables |
 | `classifier.py` | Regex-based interaction classifier for research data (purchase, inquiry, adversarial, etc.) |
 
@@ -56,11 +58,11 @@ Messages without a mention are ignored (`no-mention` filter).
 
 ```
 main.py              → FastAPI app entry point, mounts all routers
-agent/               → Claude API agent loop, tools, memory, guardrails
-api/                 → FastAPI routers (products, checkout, webhook, admin, ws)
-db/                  → SQLAlchemy models, DB init, migrations
+agent/               → Claude API agent loop, tools, memory, guardrails, pickup, context
+api/                 → FastAPI routers (products, checkout, pickup, webhook, admin, ws)
+db/                  → SQLAlchemy models (12 tables), DB init
 hardware/            → GPIO, camera, NFC (auto-mocked on Windows)
-frontend/            → React PWA served as static files
+frontend/            → React PWA served as static files (5 tabs: Products, Cart, Pickup, Status, Incoming)
 config/              → systemd services, nginx, openclaw.yaml
 skills/              → OpenClaw skill definitions (thin routing wrappers)
 scripts/             → Seed data, backup, manual test scripts
@@ -79,10 +81,12 @@ scripts/             → Seed data, backup, manual test scripts
 
 ### Agent
 - **Agent loop** calls Claude API directly via `anthropic` SDK — OpenClaw is NOT in the loop
+- **Selective recall** — `agent/context.py` runs 5 parallel channels before every Claude call (customer profile, recent episodes, related knowledge, pending pickups, business context)
 - **All tool calls** pass through `agent/guardrails.py` before execution
 - **Every agent decision** is logged to `agent_decisions` table with trigger, action, reasoning
 - **System prompt** lives in `agent/prompts.py` — single source of truth
 - **Context window** — rolling 30K token window, trimmed by `trim_to_tokens()`
+- **Pickup workflow** — Slack/Discord orders create pickup reservations (30-min expiry) instead of instant sales
 
 ### Hardware
 - `hardware/__init__.py` exports `get_controller()` which returns real or mock controller based on platform
@@ -96,9 +100,9 @@ scripts/             → Seed data, backup, manual test scripts
 
 ### API Design
 - RESTful endpoints under `/api/`
-- iPad-facing: `/api/products`, `/api/cart/checkout`, `/api/status`
+- iPad-facing: `/api/products`, `/api/cart/checkout`, `/api/pickup/confirm`, `/api/status`
 - OpenClaw bridge: `/api/webhook/oclaw`
-- Admin: `/api/admin/*` (authenticated)
+- Admin: `/api/admin/*` (authenticated), `/api/admin/pickups`
 - WebSocket: `/ws/updates`
 
 ## Environment Variables (.env)
@@ -198,10 +202,13 @@ python scripts/seed_products.py
 These are enforced in `agent/guardrails.py` at the tool execution level:
 - `sell_price >= cost_price * 1.3` (minimum 30% margin)
 - Max discount: 15% without admin override
-- Max single purchase: $80
+- Max single purchase: $80 (applies to both `process_order` and `create_pickup_reservation`)
 - Max restock quantity: 50 per item per request
 - Door unlock requires a stated reason
 - Price cannot exceed 5x cost (likely error)
+- Pickup code must be exactly 6 characters
+- Customer notes max 500 characters
+- Knowledge insight max 1000 characters
 
 ## Git Workflow
 
