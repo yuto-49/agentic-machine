@@ -3,8 +3,9 @@ import ProductGrid from "./components/ProductGrid";
 import Cart from "./components/Cart";
 import MachineStatus from "./components/MachineStatus";
 import IncomingTab from "./components/IncomingTab";
+import ScenarioRunner from "./components/ScenarioRunner";
 
-const TABS = ["Products", "Cart", "Status", "Incoming"];
+const TABS = ["Products", "Cart", "Status", "Incoming", "Simulate"];
 
 export default function App({ onTabChange, onCheckoutComplete }) {
   const [activeTab, setActiveTab] = useState("Products");
@@ -71,6 +72,7 @@ export default function App({ onTabChange, onCheckoutComplete }) {
         )}
         {activeTab === "Status" && <MachineStatus />}
         {activeTab === "Incoming" && <IncomingTab />}
+        {activeTab === "Simulate" && <ScenarioRunner />}
       </main>
     </div>
   );
