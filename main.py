@@ -12,6 +12,7 @@ from api.webhook import router as webhook_router
 from api.admin import router as admin_router
 from api.requests import router as requests_router
 from api.pickup import router as pickup_router
+from api.scenario import router as scenario_router
 from api.websocket import router as ws_router
 from db import init_db
 from config_app import settings
@@ -46,6 +47,7 @@ app.include_router(webhook_router, prefix="/api", tags=["webhook"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(requests_router, prefix="/api", tags=["requests"])
 app.include_router(pickup_router, prefix="/api", tags=["pickup"])
+app.include_router(scenario_router, prefix="/api", tags=["scenario"])
 app.include_router(ws_router, tags=["websocket"])
 
 

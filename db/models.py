@@ -178,6 +178,41 @@ class AgentKnowledge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Scenario(Base):
+    """A simulation scenario run."""
+    __tablename__ = "scenarios"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    spec_json: Mapped[Optional[str]] = mapped_column(Text)  # ScenarioSpec as JSON
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, running, completed, failed
+    total_turns: Mapped[int] = mapped_column(Integer, default=0)
+    outcome: Mapped[Optional[str]] = mapped_column(String(30))  # deal_closed, customer_left, escalation, no_deal
+    outcome_json: Mapped[Optional[str]] = mapped_column(Text)  # full outcome analysis
+    seller_score: Mapped[Optional[int]] = mapped_column(Integer)  # 0-100
+    final_price: Mapped[Optional[float]] = mapped_column(Float)
+    product_cost: Mapped[Optional[float]] = mapped_column(Float)
+    margin_achieved: Mapped[Optional[float]] = mapped_column(Float)
+    tactics_used: Mapped[Optional[str]] = mapped_column(Text)  # JSON list
+    training_signal: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ScenarioTurn(Base):
+    """One turn in a simulation dialogue."""
+    __tablename__ = "scenario_turns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scenario_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    role_name: Mapped[str] = mapped_column(String(30), nullable=False)  # customer, seller, system
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_calls_json: Mapped[Optional[str]] = mapped_column(Text)
+    guardrail_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+    guardrail_detail: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class DailyMetric(Base):
     """Agent performance scorecard — one row per day."""
     __tablename__ = "daily_metrics"

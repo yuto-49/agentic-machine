@@ -4,8 +4,9 @@ import Cart from "./components/Cart";
 import MachineStatus from "./components/MachineStatus";
 import IncomingTab from "./components/IncomingTab";
 import PickupEntry from "./components/PickupEntry";
+import ScenarioRunner from "./components/ScenarioRunner";
 
-const TABS = ["Products", "Cart", "Pickup", "Status", "Incoming"];
+const TABS = ["Products", "Cart", "Pickup", "Status", "Incoming", "Simulate"];
 
 export default function App({ onTabChange, onCheckoutComplete }) {
   const [activeTab, setActiveTab] = useState("Products");
@@ -73,6 +74,7 @@ export default function App({ onTabChange, onCheckoutComplete }) {
         {activeTab === "Pickup" && <PickupEntry />}
         {activeTab === "Status" && <MachineStatus />}
         {activeTab === "Incoming" && <IncomingTab />}
+        {activeTab === "Simulate" && <ScenarioRunner />}
       </main>
     </div>
   );
