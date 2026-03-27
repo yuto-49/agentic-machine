@@ -10,13 +10,12 @@ import logging
 import uuid
 from typing import Any, Optional
 
-import anthropic
-
 from agent.classifier import classify_interaction
 from agent.context import prime_context
 from agent.guardrails import validate_action
 from agent.memory import AgentMemory
 from agent.prompts import SYSTEM_PROMPT, TOOL_DEFINITIONS
+from agent.llm_provider import get_llm_provider
 from agent.tools import execute_tool
 from config_app import settings
 from db.engine import async_session_factory
@@ -156,7 +155,7 @@ async def agent_step(
     Returns:
         The agent's text response.
     """
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    provider = get_llm_provider()
 
     # Enrich trigger with metadata for context
     enriched_trigger = trigger
@@ -189,9 +188,10 @@ async def agent_step(
             channel=metadata.get("channel") if metadata else None,
         )
 
-        # Call Claude API
-        response = client.messages.create(
-            model=MODEL,
+        # Call LLM
+        model = settings.ollama_model if settings.llm_provider == "ollama" else MODEL
+        response = provider.create(
+            model=model,
             max_tokens=MAX_TOKENS,
             system=system_with_context,
             tools=TOOL_DEFINITIONS,
@@ -252,8 +252,8 @@ async def agent_step(
             _conversation_history.append({"role": "user", "content": tool_results})
             trimmed = _trim_to_tokens(_conversation_history, MAX_CONTEXT_TOKENS)
 
-            response = client.messages.create(
-                model=MODEL,
+            response = provider.create(
+                model=model,
                 max_tokens=MAX_TOKENS,
                 system=system_with_context,
                 tools=TOOL_DEFINITIONS,

@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 
-import anthropic
+from agent.llm_provider import get_llm_provider
 
 from agent.guardrails import (
     MAX_DISCOUNT_PERCENT,
@@ -27,7 +27,6 @@ from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-5-20250929"
 MAX_TOKENS = 2048
 
 
@@ -249,14 +248,15 @@ class ScenarioParser:
     """Parse a user's natural-language prompt into a structured ScenarioSpec."""
 
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self.provider = get_llm_provider()
 
     async def parse(self, prompt: str, inventory: list[dict]) -> ScenarioSpec:
         """Use Claude to convert a freeform prompt into a ScenarioSpec."""
         inventory_text = json.dumps(inventory, indent=2)
 
-        response = self.client.messages.create(
-            model=MODEL,
+        sim_model = settings.ollama_model if settings.llm_provider == "ollama" else settings.simulation_model
+        response = await self.provider.acreate(
+            model=sim_model,
             max_tokens=1500,
             system="You parse simulation prompts into structured JSON. Always respond with valid JSON only, no markdown.",
             messages=[{
@@ -335,7 +335,7 @@ class ScenarioEngine:
     """Run a turn-by-turn dialogue simulation between customer and seller."""
 
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self.provider = get_llm_provider()
 
     async def run(self, spec: ScenarioSpec, scenario_id: int) -> tuple[list[TurnRecord], ScenarioOutcome]:
         """Execute the simulation and return transcript + outcome."""
@@ -419,12 +419,13 @@ class ScenarioEngine:
         return transcript, outcome
 
     async def _call_agent(self, system_prompt: str, messages: list[dict]) -> str:
-        """Make a single Claude API call for one agent role."""
+        """Make a single LLM call for one agent role."""
         if not messages:
             return ""
 
-        response = self.client.messages.create(
-            model=MODEL,
+        sim_model = settings.ollama_model if settings.llm_provider == "ollama" else settings.simulation_model
+        response = await self.provider.acreate(
+            model=sim_model,
             max_tokens=MAX_TOKENS,
             system=system_prompt,
             messages=messages,
@@ -507,8 +508,9 @@ Evaluate the SELLER's performance. Return JSON only:
     "summary": "2-3 sentence summary of what happened"
 }}"""
 
-        response = self.client.messages.create(
-            model=MODEL,
+        sim_model = settings.ollama_model if settings.llm_provider == "ollama" else settings.simulation_model
+        response = await self.provider.acreate(
+            model=sim_model,
             max_tokens=1000,
             system="You evaluate sales negotiations. Respond with valid JSON only, no markdown.",
             messages=[{"role": "user", "content": eval_prompt}],
@@ -595,6 +597,10 @@ async def run_scenario(prompt: str, preset_id: Optional[str] = None) -> dict[str
 
     Returns a dict with scenario_id, transcript, outcome, and spec.
     """
+    # Early API key check — fail fast before creating DB records (skip for ollama)
+    if settings.llm_provider != "ollama" and not settings.anthropic_api_key:
+        raise ValueError("API key not configured. Set ANTHROPIC_API_KEY in .env to run simulations.")
+
     parser = ScenarioParser()
     engine = ScenarioEngine()
 

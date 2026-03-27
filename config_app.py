@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./claudius.db"
 
+    # LLM provider: "anthropic" (default) or "ollama" (local, free)
+    llm_provider: str = "anthropic"
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_model: str = "qwen2.5:14b"
+
+    # Simulation
+    simulation_model: str = "claude-sonnet-4-5-20250929"
+
     # Online product search
     search_backend: str = "mock"  # mock | amazon
 

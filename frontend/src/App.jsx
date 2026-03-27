@@ -4,9 +4,8 @@ import Cart from "./components/Cart";
 import MachineStatus from "./components/MachineStatus";
 import IncomingTab from "./components/IncomingTab";
 import PickupEntry from "./components/PickupEntry";
-import ScenarioRunner from "./components/ScenarioRunner";
 
-const TABS = ["Products", "Cart", "Pickup", "Status", "Incoming", "Simulate"];
+const TABS = ["Products", "Cart", "Pickup", "Status", "Incoming"];
 
 export default function App({ onTabChange, onCheckoutComplete }) {
   const [activeTab, setActiveTab] = useState("Products");
@@ -30,30 +29,37 @@ export default function App({ onTabChange, onCheckoutComplete }) {
 
   const clearCart = () => setCartItems([]);
 
-  return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <header className="bg-indigo-600 text-white p-4 text-center">
-        <h1 className="text-2xl font-bold">Claudius</h1>
-        <p className="text-sm opacity-80">AI Vending Machine</p>
-      </header>
+  const totalItems = cartItems.reduce((sum, i) => sum + i.qty, 0);
 
-      {/* Tab Navigation */}
-      <nav className="flex border-b bg-white">
+  return (
+    <div className="space-y-6">
+      {/* Page header */}
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Point of Sale</h1>
+        <p className="text-sm text-gray-400 mt-1">
+          Customer-facing POS interface
+        </p>
+      </div>
+
+      {/* Tab Navigation — pill style */}
+      <nav className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
         {TABS.map((tab) => (
           <button
             key={tab}
-            onClick={() => { setActiveTab(tab); onTabChange?.(tab); }}
-            className={`flex-1 py-3 text-center font-medium ${
+            onClick={() => {
+              setActiveTab(tab);
+              onTabChange?.(tab);
+            }}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
               activeTab === tab
-                ? "text-indigo-600 border-b-2 border-indigo-600"
-                : "text-gray-500"
+                ? "bg-white text-gray-900 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
             }`}
           >
             {tab}
-            {tab === "Cart" && cartItems.length > 0 && (
-              <span className="ml-1 bg-indigo-600 text-white text-xs rounded-full px-2 py-0.5">
-                {cartItems.reduce((sum, i) => sum + i.qty, 0)}
+            {tab === "Cart" && totalItems > 0 && (
+              <span className="ml-1.5 bg-gray-900 text-white text-[10px] rounded-full px-1.5 py-0.5 font-medium">
+                {totalItems}
               </span>
             )}
           </button>
@@ -61,7 +67,7 @@ export default function App({ onTabChange, onCheckoutComplete }) {
       </nav>
 
       {/* Tab Content */}
-      <main className="p-4 max-w-4xl mx-auto">
+      <div>
         {activeTab === "Products" && <ProductGrid onAddToCart={addToCart} />}
         {activeTab === "Cart" && (
           <Cart
@@ -74,8 +80,7 @@ export default function App({ onTabChange, onCheckoutComplete }) {
         {activeTab === "Pickup" && <PickupEntry />}
         {activeTab === "Status" && <MachineStatus />}
         {activeTab === "Incoming" && <IncomingTab />}
-        {activeTab === "Simulate" && <ScenarioRunner />}
-      </main>
+      </div>
     </div>
   );
 }

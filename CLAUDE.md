@@ -52,7 +52,7 @@ Messages without a mention are ignored (`no-mention` filter).
 - **Python 3.12** — backend (FastAPI + agent + hardware)
 - **Node.js** — frontend build (React + Vite + Tailwind) and OpenClaw gateway
 - **SQLite** via **SQLAlchemy ORM** (async with aiosqlite)
-- **macOS development** with Pi deployment — hardware modules auto-mock on non-Pi platforms
+- **macOS / Windows development** with Pi deployment — hardware modules auto-mock on non-Pi platforms
 
 ## Key Directories
 
@@ -116,6 +116,9 @@ DISCORD_BOT_TOKEN=     # Optional until Discord integration
 DATABASE_URL=          # Default: sqlite+aiosqlite:///./claudius.db
 ENVIRONMENT=           # development | production
 LOG_LEVEL=             # DEBUG | INFO | WARNING (default: INFO)
+LLM_PROVIDER=          # "anthropic" (default) or "ollama" (local, free)
+OLLAMA_BASE_URL=       # Default: http://localhost:11434/v1
+OLLAMA_MODEL=          # Default: qwen2.5:14b
 ```
 
 ## Running Locally (macOS)
@@ -133,6 +136,47 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Running Locally (Windows)
+
+```powershell
+# Backend (terminal 1 — PowerShell)
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python db/init_db.py
+uvicorn main:app --reload --port 8000
+
+# Frontend (terminal 2)
+cd frontend
+npm install
+npm run dev
+```
+
+**Note:** If you get an execution policy error activating the venv, run:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+Hardware modules auto-mock on Windows — no GPIO/camera/NFC setup needed.
+
+## Using Ollama (Local LLM — No API Credits)
+
+To avoid consuming Claude API credits during development, you can use Ollama as a local LLM backend:
+
+```bash
+# 1. Install Ollama (https://ollama.com)
+# 2. Pull the recommended model
+ollama pull qwen2.5:14b
+
+# 3. Start Ollama (if not already running)
+ollama serve
+
+# 4. Add to .env
+LLM_PROVIDER=ollama
+```
+
+This switches the agent loop, scenario engine, and E2E customer agent to use the local model. Set `LLM_PROVIDER=anthropic` (or remove the variable) to switch back to Claude.
 
 ## OpenClaw Gateway Setup (macOS)
 

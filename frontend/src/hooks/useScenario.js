@@ -21,10 +21,12 @@ export function useScenarioRun() {
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
+  const [errorType, setErrorType] = useState(null);
 
   const run = useCallback(async (prompt, presetId = null) => {
     setRunning(true);
     setError(null);
+    setErrorType(null);
     setResult(null);
 
     try {
@@ -39,6 +41,7 @@ export function useScenarioRun() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
+        setErrorType(err.error_type || null);
         throw new Error(err.detail || "Simulation failed");
       }
 
@@ -53,7 +56,7 @@ export function useScenarioRun() {
     }
   }, []);
 
-  return { run, result, running, error };
+  return { run, result, running, error, errorType };
 }
 
 export function useScenarioHistory() {

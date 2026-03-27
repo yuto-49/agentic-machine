@@ -50,6 +50,11 @@ app.include_router(pickup_router, prefix="/api", tags=["pickup"])
 app.include_router(scenario_router, prefix="/api", tags=["scenario"])
 app.include_router(ws_router, tags=["websocket"])
 
+# --- Test Lab (development only) ---
+if settings.environment == "development":
+    from tests.e2e.runner import router as testing_router
+    app.include_router(testing_router, prefix="/api", tags=["testing"])
+
 
 @app.get("/api/status")
 async def machine_status():

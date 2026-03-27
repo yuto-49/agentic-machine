@@ -4,8 +4,10 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from agent.llm_provider import LLMAuthError, LLMConnectionError, LLMProviderError, LLMRateLimitError
 from agent.scenario import PRESET_SCENARIOS, run_scenario
 from db.engine import async_session_factory
 from db.models import Scenario, ScenarioTurn
@@ -69,6 +71,48 @@ async def run_scenario_endpoint(req: ScenarioRunRequest):
     try:
         result = await run_scenario(prompt, preset_id=req.preset_id)
         return ScenarioRunResponse(**result)
+    except ValueError as e:
+        # Early validation errors (e.g. missing API key)
+        return JSONResponse(
+            status_code=400,
+            content={"detail": str(e), "error_type": "config"},
+        )
+    except LLMAuthError:
+        logger.warning("Scenario run failed: LLM authentication/billing error")
+        return JSONResponse(
+            status_code=402,
+            content={
+                "detail": "API credits exhausted or invalid key. Please check your LLM provider account.",
+                "error_type": "billing",
+            },
+        )
+    except LLMRateLimitError:
+        logger.warning("Scenario run failed: LLM rate limit")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": "API rate limited. Please try again shortly.",
+                "error_type": "rate_limit",
+            },
+        )
+    except LLMConnectionError:
+        logger.warning("Scenario run failed: Cannot connect to LLM provider")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Cannot connect to LLM provider. If using Ollama, ensure it is running (ollama serve).",
+                "error_type": "connection",
+            },
+        )
+    except LLMProviderError:
+        logger.exception("Scenario run failed: LLM provider error")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": "AI service unavailable. Please try again later.",
+                "error_type": "api_error",
+            },
+        )
     except Exception as e:
         logger.exception("Scenario run failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Simulation failed: {str(e)}")
