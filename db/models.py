@@ -155,6 +155,60 @@ class ScenarioTurn(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class MarketSimulation(Base):
+    """A market prediction simulation run for a given location."""
+    __tablename__ = "market_simulations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    location: Mapped[str] = mapped_column(String(300), nullable=False)
+    location_seed_json: Mapped[Optional[str]] = mapped_column(Text)   # LocationSeed as JSON
+    agent_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, seeding, generating, simulating, reporting, completed, failed
+    prediction_report: Mapped[Optional[str]] = mapped_column(Text)     # Final Claude-generated report
+    top_products_json: Mapped[Optional[str]] = mapped_column(Text)     # JSON list of ranked products
+    segment_breakdown_json: Mapped[Optional[str]] = mapped_column(Text)  # JSON customer segments
+    placement_recommendation: Mapped[Optional[str]] = mapped_column(Text)
+    revenue_projection_json: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MarketSimAgent(Base):
+    """A synthetic customer agent within a market simulation."""
+    __tablename__ = "market_sim_agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    simulation_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_index: Mapped[int] = mapped_column(Integer, nullable=False)  # 0..N-1
+    age: Mapped[Optional[int]] = mapped_column(Integer)
+    gender: Mapped[Optional[str]] = mapped_column(String(20))
+    occupation: Mapped[Optional[str]] = mapped_column(String(100))
+    income_level: Mapped[Optional[str]] = mapped_column(String(30))    # low, medium, high
+    lifestyle: Mapped[Optional[str]] = mapped_column(String(200))
+    dietary_prefs: Mapped[Optional[str]] = mapped_column(String(200))
+    price_sensitivity: Mapped[Optional[str]] = mapped_column(String(20))  # low, medium, high
+    visit_time: Mapped[Optional[str]] = mapped_column(String(30))      # morning, afternoon, evening
+    visit_purpose: Mapped[Optional[str]] = mapped_column(String(100))
+    budget: Mapped[Optional[float]] = mapped_column(Float)
+    profile_json: Mapped[Optional[str]] = mapped_column(Text)          # full raw profile
+
+
+class MarketSimDecision(Base):
+    """Purchase decision made by one synthetic agent."""
+    __tablename__ = "market_sim_decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    simulation_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    did_purchase: Mapped[bool] = mapped_column(Boolean, default=False)
+    product_name: Mapped[Optional[str]] = mapped_column(String(100))
+    product_id: Mapped[Optional[int]] = mapped_column(Integer)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    willingness_to_pay: Mapped[Optional[float]] = mapped_column(Float)
+    skip_reason: Mapped[Optional[str]] = mapped_column(Text)
+    reasoning: Mapped[Optional[str]] = mapped_column(Text)
+    visit_frequency_per_week: Mapped[Optional[float]] = mapped_column(Float)
+
+
 class DailyMetric(Base):
     """Agent performance scorecard — one row per day."""
     __tablename__ = "daily_metrics"
